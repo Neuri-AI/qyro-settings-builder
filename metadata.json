@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix Qyro Project Manager",
+  "description": "Efficiently extract and manage your qyro-cli-main project files directly within your internal workspace for seamless development.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
