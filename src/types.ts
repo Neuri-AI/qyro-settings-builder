@@ -71,6 +71,8 @@ export interface FreezeManifest {
   hiddenImports: string[];
   resourcesDir: string;
   extraPyInstallerArgs: string[];
+  paths: string[];
+  collectAll: string[];
 }
 
 export interface BuildLogEntry {

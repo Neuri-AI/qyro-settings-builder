@@ -38,6 +38,8 @@ import {
   getRecommendedExcludesForFramework,
   sanitizeExcludesForFramework,
   getUpxExcludesForPlatform,
+  getDefaultExcludeBinariesForFramework,
+  getDefaultExcludePluginsForFramework,
   calculateEstimatedSize,
 } from "../data/optimizationPresets";
 
@@ -68,6 +70,12 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
   const [selectedExclusionCategory, setSelectedExclusionCategory] =
     useState<string>("all");
 
+  const normalizeList = (items: string[]): string[] =>
+    Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
+
+  const parseListFromText = (text: string): string[] =>
+    normalizeList(text.split("\n").map((item) => item.trim()));
+
   const defaultKivyConfig: KivyConfig = {
     depsMode: "minimal",
     includeSdl2: true,
@@ -93,6 +101,17 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     manifest.optimization.excludeModules,
   );
 
+  const effectiveCollectAll = (() => {
+    const collectAll = normalizeList(manifest.collectAll || []);
+    if (
+      manifest.framework === "PySide2" &&
+      !collectAll.some((entry) => entry.toLowerCase() === "pyside2")
+    ) {
+      collectAll.unshift("PySide2");
+    }
+    return collectAll;
+  })();
+
   // 1. Generate settings/base.json (Pure cross-platform project metadata)
   const baseJsonObj = {
     app_name: manifest.appName,
@@ -107,6 +126,8 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
   // 2. Generate settings/windows.json
   const windowsJsonObj: any = {
     bundle_mode: manifest.bundleMode,
+    paths: normalizeList(manifest.paths || []),
+    collect_all: effectiveCollectAll,
     uac: {
       level: manifest.uac.level,
       ui_access: manifest.uac.uiAccess,
@@ -131,20 +152,10 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
       ),
       exclude_binaries:
         manifest.optimization.excludeBinaries ||
-        (manifest.framework === "PySide6" ? ["opengl32sw.dll"] : []),
+        getDefaultExcludeBinariesForFramework("windows", manifest.framework),
       exclude_plugins:
         manifest.optimization.excludePlugins ||
-        (manifest.framework === "PySide6"
-          ? [
-              "generic",
-              "networkinformation",
-              "tls",
-              "styles",
-              "platforminputcontexts",
-              "iconengines",
-              "imageformats",
-            ]
-          : []),
+        getDefaultExcludePluginsForFramework("windows", manifest.framework),
       bytecode_opt: manifest.optimization.bytecodeOpt,
       exclude_modules: sanitizedExcludes,
     },
@@ -167,6 +178,8 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     author_email: "",
     url: "",
     bundle_mode: manifest.bundleMode,
+    paths: normalizeList(manifest.paths || []),
+    collect_all: effectiveCollectAll,
     debug: {
       enabled: manifest.debug.enabled,
       console: manifest.debug.consoleWindow,
@@ -185,21 +198,12 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
         manifest.framework,
         manifest.optimization.upxExcludes,
       ),
-      exclude_binaries: manifest.optimization.excludeBinaries || [],
+      exclude_binaries:
+        manifest.optimization.excludeBinaries ||
+        getDefaultExcludeBinariesForFramework("linux", manifest.framework),
       exclude_plugins:
         manifest.optimization.excludePlugins ||
-        (manifest.framework.startsWith("PySide") ||
-        manifest.framework.startsWith("PyQt")
-          ? [
-              "generic",
-              "networkinformation",
-              "tls",
-              "styles",
-              "platforminputcontexts",
-              "iconengines",
-              "imageformats",
-            ]
-          : []),
+        getDefaultExcludePluginsForFramework("linux", manifest.framework),
       bytecode_opt: manifest.optimization.bytecodeOpt,
       exclude_modules: sanitizedExcludes,
     },
@@ -208,6 +212,8 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
   // 4. Generate settings/mac.json (standard Qyro profile)
   const macosJsonObj = {
     bundle_mode: manifest.bundleMode,
+    paths: normalizeList(manifest.paths || []),
+    collect_all: effectiveCollectAll,
     mac_bundle_identifier: `com.${(manifest.author || "john").toLowerCase().replace(/\s+/g, "")}.${manifest.appName.toLowerCase().replace(/\s+/g, "")}`,
     debug: {
       enabled: manifest.debug.enabled,
@@ -217,21 +223,12 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
       strip_binaries: manifest.optimization.stripBinaries,
       clean_build: manifest.optimization.cleanBuild,
       upx_enabled: false,
-      exclude_binaries: manifest.optimization.excludeBinaries || [],
+      exclude_binaries:
+        manifest.optimization.excludeBinaries ||
+        getDefaultExcludeBinariesForFramework("macos", manifest.framework),
       exclude_plugins:
         manifest.optimization.excludePlugins ||
-        (manifest.framework.startsWith("PySide") ||
-        manifest.framework.startsWith("PyQt")
-          ? [
-              "generic",
-              "networkinformation",
-              "tls",
-              "styles",
-              "platforminputcontexts",
-              "iconengines",
-              "imageformats",
-            ]
-          : []),
+        getDefaultExcludePluginsForFramework("macos", manifest.framework),
       bytecode_opt: manifest.optimization.bytecodeOpt,
       exclude_modules: sanitizedExcludes,
     },
@@ -280,12 +277,22 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
       manifest.framework,
       manifest.optimization.upxExcludes,
     );
+    const updatedExcludeBinaries = getDefaultExcludeBinariesForFramework(
+      platform,
+      manifest.framework,
+    );
+    const updatedExcludePlugins = getDefaultExcludePluginsForFramework(
+      platform,
+      manifest.framework,
+    );
     onChange({
       ...manifest,
       targetPlatform: platform,
       optimization: {
         ...manifest.optimization,
         upxExcludes: updatedUpxExcludes,
+        excludeBinaries: updatedExcludeBinaries,
+        excludePlugins: updatedExcludePlugins,
       },
     });
     // If switching away from windows while on UAC tab, fallback to bundle tab
@@ -321,6 +328,14 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
       rawRecommended,
     );
     const updatedUpxExcludes = getUpxExcludesForPlatform(
+      manifest.targetPlatform,
+      fw,
+    );
+    const updatedExcludeBinaries = getDefaultExcludeBinariesForFramework(
+      manifest.targetPlatform,
+      fw,
+    );
+    const updatedExcludePlugins = getDefaultExcludePluginsForFramework(
       manifest.targetPlatform,
       fw,
     );
@@ -379,10 +394,16 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
       ...manifest,
       framework: fw,
       kivy: fw === "Kivy" ? updatedKivy : manifest.kivy,
+      collectAll:
+        fw === "PySide2"
+          ? normalizeList(["PySide2", ...(manifest.collectAll || [])])
+          : normalizeList(manifest.collectAll || []),
       optimization: {
         ...manifest.optimization,
         excludeModules: sanitizedRecommended,
         upxExcludes: updatedUpxExcludes,
+        excludeBinaries: updatedExcludeBinaries,
+        excludePlugins: updatedExcludePlugins,
       },
       hiddenImports: updatedHidden,
     });
@@ -416,16 +437,39 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
 
   const handleSelectAllExcludes = () => {
     const catalog = FRAMEWORK_EXCLUSION_CATALOG[manifest.framework] || [];
+    const recommended = getRecommendedExcludesForFramework(manifest.framework);
     const allIds = Array.from(
       new Set([
+        ...recommended,
         ...manifest.optimization.excludeModules,
         ...catalog.map((c) => c.id),
       ]),
     );
+    const maxUpxEnabled = manifest.targetPlatform !== "macos";
+
     onChange({
       ...manifest,
       optimization: {
         ...manifest.optimization,
+        upxEnabled: maxUpxEnabled,
+        upxLevel: 9,
+        upxDir: null,
+        upxExcludes: getUpxExcludesForPlatform(
+          manifest.targetPlatform,
+          manifest.framework,
+          manifest.optimization.upxExcludes,
+        ),
+        excludeBinaries: getDefaultExcludeBinariesForFramework(
+          manifest.targetPlatform,
+          manifest.framework,
+        ),
+        excludePlugins: getDefaultExcludePluginsForFramework(
+          manifest.targetPlatform,
+          manifest.framework,
+        ),
+        bytecodeOpt: 2,
+        stripBinaries: true,
+        cleanBuild: true,
         excludeModules: allIds,
       },
     });
@@ -1235,6 +1279,51 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                   </div>
                 </div>
               </div>
+
+              <div className="space-y-3 border-t border-zinc-100 pt-3">
+                <label className="block font-semibold text-zinc-700 text-xs">
+                  Additional Search Paths (
+                  <code className="text-amber-700">paths</code>)
+                </label>
+                <textarea
+                  rows={3}
+                  value={(manifest.paths || []).join("\n")}
+                  onChange={(e) =>
+                    onChange({
+                      ...manifest,
+                      paths: parseListFromText(e.target.value),
+                    })
+                  }
+                  placeholder="One path per line, e.g. C:\\path\\to\\venv\\Library\\bin"
+                  className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-hidden font-mono text-xs"
+                />
+                <p className="text-[11px] text-zinc-500">
+                  Exported as <code>--paths</code> in PyInstaller.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <label className="block font-semibold text-zinc-700 text-xs">
+                  Full Package Collection (
+                  <code className="text-amber-700">collect_all</code>)
+                </label>
+                <textarea
+                  rows={3}
+                  value={effectiveCollectAll.join("\n")}
+                  onChange={(e) =>
+                    onChange({
+                      ...manifest,
+                      collectAll: parseListFromText(e.target.value),
+                    })
+                  }
+                  placeholder="One package per line, e.g. PySide2"
+                  className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-hidden font-mono text-xs"
+                />
+                <p className="text-[11px] text-zinc-500">
+                  Exported as <code>--collect-all</code>; for PySide2 this keeps
+                  shiboken dependencies available at runtime.
+                </p>
+              </div>
             </div>
           )}
 
@@ -1846,6 +1935,15 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                     ></div>
                   </div>
                 </div>
+
+                {manifest.framework === "PySide6" &&
+                  manifest.targetPlatform === "windows" && (
+                    <div className="rounded-lg border border-zinc-700 bg-zinc-900/70 p-2.5 text-[10px] text-zinc-300 leading-relaxed">
+                      Calibration note: this estimate was validated with PySide6
+                      on a Windows 11 environment (Display Version 25H2,
+                      Build 26200.9457) with cumulative update KB5129195.
+                    </div>
+                  )}
               </div>
 
               {/* Presets & Actions Toolbar */}
@@ -2260,6 +2358,28 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                   />
                 </div>
 
+                {manifest.targetPlatform === "macos" && (
+                  <div
+                    className={`rounded-xl border p-3 text-[11px] leading-relaxed ${
+                      manifest.optimization.upxEnabled
+                        ? "bg-rose-50 border-rose-300 text-rose-900"
+                        : "bg-amber-50 border-amber-300 text-amber-900"
+                    }`}
+                  >
+                    <span className="font-bold block mb-0.5">
+                      {manifest.optimization.upxEnabled
+                        ? "Warning: UPX on macOS can break the app"
+                        : "UPX on macOS is not recommended"}
+                    </span>
+                    <span>
+                      On macOS, compressing binaries with UPX can cause startup
+                      crashes, invalidate code signing, and break
+                      notarization/Gatekeeper checks. Keep it disabled for
+                      signed release builds.
+                    </span>
+                  </div>
+                )}
+
                 {manifest.optimization.upxEnabled && (
                   <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-200 space-y-3">
                     <div>
@@ -2393,9 +2513,10 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                   <div className="flex flex-wrap gap-1.5 mb-2">
                     {(
                       manifest.optimization.excludeBinaries ||
-                      (manifest.framework === "PySide6"
-                        ? ["opengl32sw.dll"]
-                        : [])
+                      getDefaultExcludeBinariesForFramework(
+                        manifest.targetPlatform,
+                        manifest.framework,
+                      )
                     ).map((bin) => (
                       <span
                         key={bin}
@@ -2407,9 +2528,10 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                           onClick={() => {
                             const current =
                               manifest.optimization.excludeBinaries ||
-                              (manifest.framework === "PySide6"
-                                ? ["opengl32sw.dll"]
-                                : []);
+                              getDefaultExcludeBinariesForFramework(
+                                manifest.targetPlatform,
+                                manifest.framework,
+                              );
                             onChange({
                               ...manifest,
                               optimization: {
@@ -2507,15 +2629,11 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                   </div>
                   <div className="flex flex-wrap gap-1.5 mb-2">
                     {(
-                      manifest.optimization.excludePlugins || [
-                        "generic",
-                        "networkinformation",
-                        "tls",
-                        "styles",
-                        "platforminputcontexts",
-                        "iconengines",
-                        "imageformats",
-                      ]
+                      manifest.optimization.excludePlugins ||
+                      getDefaultExcludePluginsForFramework(
+                        manifest.targetPlatform,
+                        manifest.framework,
+                      )
                     ).map((plug) => (
                       <span
                         key={plug}
@@ -2526,15 +2644,11 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                           type="button"
                           onClick={() => {
                             const current = manifest.optimization
-                              .excludePlugins || [
-                              "generic",
-                              "networkinformation",
-                              "tls",
-                              "styles",
-                              "platforminputcontexts",
-                              "iconengines",
-                              "imageformats",
-                            ];
+                              .excludePlugins ||
+                              getDefaultExcludePluginsForFramework(
+                                manifest.targetPlatform,
+                                manifest.framework,
+                              );
                             onChange({
                               ...manifest,
                               optimization: {

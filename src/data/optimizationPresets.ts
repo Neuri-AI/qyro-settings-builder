@@ -18,6 +18,119 @@ export interface EstimatedSizeBreakdown {
   totalCatalogCount: number;
 }
 
+const LEGACY_QT_BASE_SIZE_MB = 1079.78;
+
+// Calibrated baselines. PySide6 uses a measured no-optimization build (Windows): 404.73 MB.
+const BASE_SIZE_BY_FRAMEWORK: Record<FrameworkType, number> = {
+  PySide6: 404.73,
+  PyQt6: 392.0,
+  PySide2: 328.0,
+  PyQt5: 318.0,
+  Kivy: 345.5,
+  Tkinter: 48.2,
+};
+
+const MIN_CORE_PAYLOAD_BY_FRAMEWORK: Record<FrameworkType, number> = {
+  // Calibrated from measured max optimization builds in Windows:
+  // - PySide6: full Qt exclusions + UPX level 9 => ~50.72 MB final.
+  //   With the current UPX model at level 9 (~0.325 ratio), this implies
+  //   a pre-UPX core payload around 156.06 MB.
+  // - PyQt6: measured final size with maximum optimizations on Windows is
+  //   42.9 MB, which implies a pre-UPX core payload of ~132.0 MB.
+  PySide6: 156.06,
+  PyQt6: 132.0,
+  PySide2: 96.0,
+  PyQt5: 92.0,
+  Kivy: 42.0,
+  Tkinter: 12.0,
+};
+
+export const QT_DEFAULT_WINDOWS_EXCLUDE_BINARIES = [
+  'opengl32sw.dll',
+  'qdirect2d.dll',
+  'qoffscreen.dll',
+  'qminimal.dll',
+];
+
+export const PYQT5_DEFAULT_WINDOWS_EXCLUDE_BINARIES = [
+  'd3dcompiler_47.dll',
+  'libEGL.dll',
+  'libGLESv2.dll',
+  'Qt5WebSockets.dll',
+  'qminimal.dll',
+  'qwebgl.dll',
+  'qoffscreen.dll',
+];
+
+export const QT_DEFAULT_MACOS_EXCLUDE_BINARIES = [
+  'libqminimal.dylib',
+  'libqoffscreen.dylib',
+  'QtDBus.abi3.so',
+];
+
+export const QT_DEFAULT_WINDOWS_LINUX_EXCLUDE_PLUGINS = [
+  'generic',
+  'networkinformation',
+  'tls',
+  'styles',
+  'platforminputcontexts',
+  'iconengines',
+  'imageformats',
+];
+
+export const PYQT5_DEFAULT_WINDOWS_EXCLUDE_PLUGINS = [
+  'platformthemes',
+  'iconengines',
+  'imageformats',
+];
+
+export const QT_DEFAULT_MACOS_EXCLUDE_PLUGINS = [
+  'iconengines',
+  'imageformats',
+  'platforminputcontexts',
+  'styles',
+];
+
+export const getDefaultExcludeBinariesForFramework = (
+  platform: string,
+  framework: FrameworkType
+): string[] => {
+  const p = platform.toLowerCase();
+  const isQt = framework.startsWith('PySide') || framework.startsWith('PyQt');
+
+  if (p === 'windows' && isQt) {
+    if (framework === 'PyQt5') {
+      return PYQT5_DEFAULT_WINDOWS_EXCLUDE_BINARIES;
+    }
+    return QT_DEFAULT_WINDOWS_EXCLUDE_BINARIES;
+  }
+  if (p === 'macos' && isQt) {
+    return QT_DEFAULT_MACOS_EXCLUDE_BINARIES;
+  }
+  return [];
+};
+
+export const getDefaultExcludePluginsForFramework = (
+  platform: string,
+  framework: FrameworkType
+): string[] => {
+  const p = platform.toLowerCase();
+  const isQt = framework.startsWith('PySide') || framework.startsWith('PyQt');
+  if (!isQt) {
+    return [];
+  }
+
+  if (p === 'macos') {
+    return QT_DEFAULT_MACOS_EXCLUDE_PLUGINS;
+  }
+
+  if (p === 'windows' && framework === 'PyQt5') {
+    return PYQT5_DEFAULT_WINDOWS_EXCLUDE_PLUGINS;
+  }
+
+  return QT_DEFAULT_WINDOWS_LINUX_EXCLUDE_PLUGINS;
+};
+
 export function calculateEstimatedSize(
   framework: FrameworkType,
   excludeModules: string[],
@@ -26,12 +139,11 @@ export function calculateEstimatedSize(
   stripBinaries: boolean = false
 ): EstimatedSizeBreakdown {
   const isQt = framework.startsWith('PySide') || framework.startsWith('PyQt');
-  const isKivy = framework === 'Kivy';
-  const isTkinter = framework === 'Tkinter';
 
-  // Base raw unoptimized size (blind bundle containing entire runtime, chromium & 3D toolkits)
-  const baseSize = isQt ? 1079.78 : isKivy ? 345.50 : 48.20;
-  const minCorePayload = isQt ? 185.0 : isKivy ? 42.0 : 12.0;
+  // Base raw unoptimized size and minimal runtime payload by framework.
+  const baseSize = BASE_SIZE_BY_FRAMEWORK[framework];
+  const minCorePayload = MIN_CORE_PAYLOAD_BY_FRAMEWORK[framework];
+  const qtSavingsScale = isQt ? baseSize / LEGACY_QT_BASE_SIZE_MB : 1;
 
   const catalog = FRAMEWORK_EXCLUSION_CATALOG[framework] || [];
   const catalogMap = new Map(catalog.map((item) => [item.id, item.approxSavingsMB]));
@@ -39,10 +151,10 @@ export function calculateEstimatedSize(
   let totalSavings = 0;
   for (const mod of excludeModules) {
     if (catalogMap.has(mod)) {
-      totalSavings += catalogMap.get(mod)!;
+      totalSavings += catalogMap.get(mod)! * qtSavingsScale;
     } else {
       // Default estimation for custom user-added excluded modules
-      totalSavings += 18.0;
+      totalSavings += 18.0 * qtSavingsScale;
     }
   }
 
@@ -51,7 +163,7 @@ export function calculateEstimatedSize(
   let sizeWithExclusions = baseSize - effectiveSavings;
 
   if (stripBinaries && effectiveSavings > 0) {
-    sizeWithExclusions = Math.max(minCorePayload, sizeWithExclusions * 0.90);
+    sizeWithExclusions = Math.max(minCorePayload, sizeWithExclusions * 0.94);
   }
 
   // UPX compression impact
@@ -174,6 +286,55 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 25,
     },
     {
+      id: 'PySide6.QtQml',
+      name: 'QtQml',
+      category: '3D & OpenGL',
+      description: 'Runtime base de QML y bindings declarativos.',
+      approxSavingsMB: 18,
+    },
+    {
+      id: 'PySide6.QtQuick',
+      name: 'QtQuick',
+      category: '3D & OpenGL',
+      description: 'Motor de UI declarativa para escenas QML.',
+      approxSavingsMB: 26,
+    },
+    {
+      id: 'PySide6.QtQuickWidgets',
+      name: 'QtQuickWidgets',
+      category: '3D & OpenGL',
+      description: 'Integración de QtQuick dentro de widgets tradicionales.',
+      approxSavingsMB: 12,
+    },
+    {
+      id: 'PySide6.QtOpenGL',
+      name: 'QtOpenGL',
+      category: '3D & OpenGL',
+      description: 'Capas de abstracción para render OpenGL.',
+      approxSavingsMB: 16,
+    },
+    {
+      id: 'PySide6.QtOpenGLWidgets',
+      name: 'QtOpenGLWidgets',
+      category: '3D & OpenGL',
+      description: 'Widgets OpenGL para renderizado acelerado en Qt.',
+      approxSavingsMB: 8,
+    },
+    {
+      id: 'PySide6.QtSvg',
+      name: 'QtSvg',
+      category: 'Scientific & Extra',
+      description: 'Render de SVG vectoriales.',
+      approxSavingsMB: 10,
+    },
+    {
+      id: 'PySide6.QtNetwork',
+      name: 'QtNetwork',
+      category: 'Sensors & Hardware',
+      description: 'Sockets, SSL y APIs de red de Qt.',
+      approxSavingsMB: 14,
+    },
+    {
       id: 'tkinter',
       name: 'Tkinter (_tkinter)',
       category: 'Toolkits & Test',
@@ -205,6 +366,13 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 25,
     },
     {
+      id: 'PyQt6.QtWebEngineQuick',
+      name: 'PyQt6.QtWebEngineQuick',
+      category: 'WebEngine & Chromium',
+      description: 'Integración QML de WebEngine en PyQt6.',
+      approxSavingsMB: 20,
+    },
+    {
       id: 'PyQt6.Qt3DCore',
       name: 'PyQt6.Qt3DCore & Qt3DRender',
       category: '3D & OpenGL',
@@ -226,11 +394,32 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 35,
     },
     {
+      id: 'PyQt6.QtPdfWidgets',
+      name: 'PyQt6.QtPdfWidgets',
+      category: 'WebEngine & Chromium',
+      description: 'Widgets específicos para visualizar PDF.',
+      approxSavingsMB: 10,
+    },
+    {
+      id: 'PyQt6.Qt3DAnimation',
+      name: 'PyQt6.Qt3DAnimation',
+      category: '3D & OpenGL',
+      description: 'Sistemas de animación 3D.',
+      approxSavingsMB: 24,
+    },
+    {
       id: 'PyQt6.QtMultimedia',
       name: 'PyQt6.QtMultimedia',
       category: 'Media & Spatial Audio',
       description: 'Soporte multimedia y streaming de audio/vídeo.',
       approxSavingsMB: 50,
+    },
+    {
+      id: 'PyQt6.QtSpatialAudio',
+      name: 'PyQt6.QtSpatialAudio',
+      category: 'Media & Spatial Audio',
+      description: 'Audio espacial y posicionamiento acústico.',
+      approxSavingsMB: 15,
     },
     {
       id: 'PyQt6.QtSensors',
@@ -240,6 +429,13 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 20,
     },
     {
+      id: 'PyQt6.QtPositioning',
+      name: 'PyQt6.QtPositioning',
+      category: 'Sensors & Hardware',
+      description: 'APIs de geolocalización y GNSS.',
+      approxSavingsMB: 12,
+    },
+    {
       id: 'PyQt6.QtBluetooth',
       name: 'PyQt6.QtBluetooth & QtNfc',
       category: 'Sensors & Hardware',
@@ -247,11 +443,81 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 25,
     },
     {
+      id: 'PyQt6.QtNfc',
+      name: 'PyQt6.QtNfc',
+      category: 'Sensors & Hardware',
+      description: 'Comunicaciones NFC.',
+      approxSavingsMB: 8,
+    },
+    {
+      id: 'PyQt6.QtDesigner',
+      name: 'PyQt6.QtDesigner',
+      category: 'Toolkits & Test',
+      description: 'Módulos de diseño visual y utilidades Qt Designer.',
+      approxSavingsMB: 32,
+    },
+    {
       id: 'PyQt6.QtCharts',
       name: 'PyQt6.QtCharts',
       category: 'Scientific & Extra',
       description: 'Librerías de gráficos cartesianos y polares.',
       approxSavingsMB: 25,
+    },
+    {
+      id: 'PyQt6.QtVirtualKeyboard',
+      name: 'PyQt6.QtVirtualKeyboard',
+      category: 'Toolkits & Test',
+      description: 'Teclado virtual táctil.',
+      approxSavingsMB: 24,
+    },
+    {
+      id: 'PyQt6.QtQml',
+      name: 'PyQt6.QtQml',
+      category: '3D & OpenGL',
+      description: 'Runtime base QML declarativo.',
+      approxSavingsMB: 18,
+    },
+    {
+      id: 'PyQt6.QtQuick',
+      name: 'PyQt6.QtQuick',
+      category: '3D & OpenGL',
+      description: 'Motor QtQuick para interfaces QML.',
+      approxSavingsMB: 25,
+    },
+    {
+      id: 'PyQt6.QtQuickWidgets',
+      name: 'PyQt6.QtQuickWidgets',
+      category: '3D & OpenGL',
+      description: 'Puente entre QtQuick y widgets clásicos.',
+      approxSavingsMB: 12,
+    },
+    {
+      id: 'PyQt6.QtOpenGL',
+      name: 'PyQt6.QtOpenGL',
+      category: '3D & OpenGL',
+      description: 'Soporte OpenGL para rendering acelerado.',
+      approxSavingsMB: 15,
+    },
+    {
+      id: 'PyQt6.QtOpenGLWidgets',
+      name: 'PyQt6.QtOpenGLWidgets',
+      category: '3D & OpenGL',
+      description: 'Widgets OpenGL dentro de UIs Qt.',
+      approxSavingsMB: 8,
+    },
+    {
+      id: 'PyQt6.QtSvg',
+      name: 'PyQt6.QtSvg',
+      category: 'Scientific & Extra',
+      description: 'Render de gráficos vectoriales SVG.',
+      approxSavingsMB: 10,
+    },
+    {
+      id: 'PyQt6.QtNetwork',
+      name: 'PyQt6.QtNetwork',
+      category: 'Sensors & Hardware',
+      description: 'Pila de red (sockets, TLS, HTTP) de Qt.',
+      approxSavingsMB: 14,
     },
     {
       id: 'tkinter',
@@ -278,11 +544,39 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 190,
     },
     {
+      id: 'PySide2.QtWebEngineWidgets',
+      name: 'PySide2.QtWebEngineWidgets',
+      category: 'WebEngine & Chromium',
+      description: 'Widgets de navegación web de Qt5.',
+      approxSavingsMB: 22,
+    },
+    {
+      id: 'PySide2.QtWebEngineQuick',
+      name: 'PySide2.QtWebEngineQuick',
+      category: 'WebEngine & Chromium',
+      description: 'Integración QML de WebEngine en Qt5.',
+      approxSavingsMB: 18,
+    },
+    {
       id: 'PySide2.Qt3DCore',
       name: 'PySide2.Qt3DCore & Qt3DRender',
       category: '3D & OpenGL',
       description: 'Módulo 3D de Qt5.',
       approxSavingsMB: 40,
+    },
+    {
+      id: 'PySide2.Qt3DAnimation',
+      name: 'PySide2.Qt3DAnimation',
+      category: '3D & OpenGL',
+      description: 'Animación 3D para Qt5.',
+      approxSavingsMB: 22,
+    },
+    {
+      id: 'PySide2.QtQuick3D',
+      name: 'PySide2.QtQuick3D',
+      category: '3D & OpenGL',
+      description: 'Extensiones 3D de QtQuick para Qt5.',
+      approxSavingsMB: 60,
     },
     {
       id: 'PySide2.QtSensors',
@@ -292,6 +586,34 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 25,
     },
     {
+      id: 'PySide2.QtPositioning',
+      name: 'PySide2.QtPositioning',
+      category: 'Sensors & Hardware',
+      description: 'Servicios de posicionamiento y geolocalización.',
+      approxSavingsMB: 12,
+    },
+    {
+      id: 'PySide2.QtLocation',
+      name: 'PySide2.QtLocation',
+      category: 'Sensors & Hardware',
+      description: 'Mapas y localización para Qt5.',
+      approxSavingsMB: 16,
+    },
+    {
+      id: 'PySide2.QtBluetooth',
+      name: 'PySide2.QtBluetooth',
+      category: 'Sensors & Hardware',
+      description: 'Conectividad Bluetooth en Qt5.',
+      approxSavingsMB: 15,
+    },
+    {
+      id: 'PySide2.QtNfc',
+      name: 'PySide2.QtNfc',
+      category: 'Sensors & Hardware',
+      description: 'Comunicaciones NFC.',
+      approxSavingsMB: 7,
+    },
+    {
       id: 'PySide2.QtMultimedia',
       name: 'PySide2.QtMultimedia',
       category: 'Media & Spatial Audio',
@@ -299,11 +621,60 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 40,
     },
     {
+      id: 'PySide2.QtCharts',
+      name: 'PySide2.QtCharts',
+      category: 'Scientific & Extra',
+      description: 'Módulos de gráficos científicos y business charts.',
+      approxSavingsMB: 22,
+    },
+    {
       id: 'PySide2.QtDesigner',
       name: 'PySide2.QtDesigner',
       category: 'Toolkits & Test',
       description: 'Plugins de diseño Qt Designer 5.',
       approxSavingsMB: 30,
+    },
+    {
+      id: 'PySide2.QtQml',
+      name: 'PySide2.QtQml',
+      category: '3D & OpenGL',
+      description: 'Runtime declarativo de QML en Qt5.',
+      approxSavingsMB: 16,
+    },
+    {
+      id: 'PySide2.QtQuick',
+      name: 'PySide2.QtQuick',
+      category: '3D & OpenGL',
+      description: 'Motor QtQuick para interfaces declarativas.',
+      approxSavingsMB: 20,
+    },
+    {
+      id: 'PySide2.QtQuickWidgets',
+      name: 'PySide2.QtQuickWidgets',
+      category: '3D & OpenGL',
+      description: 'Integración de QtQuick en widgets.',
+      approxSavingsMB: 10,
+    },
+    {
+      id: 'PySide2.QtOpenGL',
+      name: 'PySide2.QtOpenGL',
+      category: '3D & OpenGL',
+      description: 'Abstracción OpenGL en Qt5.',
+      approxSavingsMB: 12,
+    },
+    {
+      id: 'PySide2.QtSvg',
+      name: 'PySide2.QtSvg',
+      category: 'Scientific & Extra',
+      description: 'Render de SVG vectoriales.',
+      approxSavingsMB: 8,
+    },
+    {
+      id: 'PySide2.QtNetwork',
+      name: 'PySide2.QtNetwork',
+      category: 'Sensors & Hardware',
+      description: 'Pila de networking y TLS de Qt5.',
+      approxSavingsMB: 12,
     },
     {
       id: 'tkinter',
@@ -330,11 +701,39 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 190,
     },
     {
+      id: 'PyQt5.QtWebEngineWidgets',
+      name: 'PyQt5.QtWebEngineWidgets',
+      category: 'WebEngine & Chromium',
+      description: 'Widgets de navegación web de PyQt5.',
+      approxSavingsMB: 22,
+    },
+    {
+      id: 'PyQt5.QtWebEngineQuick',
+      name: 'PyQt5.QtWebEngineQuick',
+      category: 'WebEngine & Chromium',
+      description: 'Integración QML de WebEngine en PyQt5.',
+      approxSavingsMB: 18,
+    },
+    {
       id: 'PyQt5.Qt3DCore',
       name: 'PyQt5.Qt3DCore',
       category: '3D & OpenGL',
       description: 'Módulo 3D de PyQt5.',
       approxSavingsMB: 40,
+    },
+    {
+      id: 'PyQt5.Qt3DAnimation',
+      name: 'PyQt5.Qt3DAnimation',
+      category: '3D & OpenGL',
+      description: 'Módulos de animación 3D.',
+      approxSavingsMB: 22,
+    },
+    {
+      id: 'PyQt5.QtQuick3D',
+      name: 'PyQt5.QtQuick3D',
+      category: '3D & OpenGL',
+      description: 'Extensiones 3D de QtQuick.',
+      approxSavingsMB: 60,
     },
     {
       id: 'PyQt5.QtSensors',
@@ -344,11 +743,95 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
       approxSavingsMB: 25,
     },
     {
+      id: 'PyQt5.QtPositioning',
+      name: 'PyQt5.QtPositioning',
+      category: 'Sensors & Hardware',
+      description: 'Servicios de positioning y geolocalización.',
+      approxSavingsMB: 12,
+    },
+    {
+      id: 'PyQt5.QtLocation',
+      name: 'PyQt5.QtLocation',
+      category: 'Sensors & Hardware',
+      description: 'Módulos de mapas y localización.',
+      approxSavingsMB: 16,
+    },
+    {
+      id: 'PyQt5.QtBluetooth',
+      name: 'PyQt5.QtBluetooth',
+      category: 'Sensors & Hardware',
+      description: 'Conectividad Bluetooth.',
+      approxSavingsMB: 15,
+    },
+    {
+      id: 'PyQt5.QtNfc',
+      name: 'PyQt5.QtNfc',
+      category: 'Sensors & Hardware',
+      description: 'Comunicaciones NFC.',
+      approxSavingsMB: 7,
+    },
+    {
+      id: 'PyQt5.QtDesigner',
+      name: 'PyQt5.QtDesigner',
+      category: 'Toolkits & Test',
+      description: 'Herramientas Qt Designer para UI visual.',
+      approxSavingsMB: 30,
+    },
+    {
       id: 'PyQt5.QtMultimedia',
       name: 'PyQt5.QtMultimedia',
       category: 'Media & Spatial Audio',
       description: 'Audio y vídeo PyQt5.',
       approxSavingsMB: 40,
+    },
+    {
+      id: 'PyQt5.QtCharts',
+      name: 'PyQt5.QtCharts',
+      category: 'Scientific & Extra',
+      description: 'Componentes de charting 2D/3D.',
+      approxSavingsMB: 22,
+    },
+    {
+      id: 'PyQt5.QtQml',
+      name: 'PyQt5.QtQml',
+      category: '3D & OpenGL',
+      description: 'Runtime QML declarativo.',
+      approxSavingsMB: 16,
+    },
+    {
+      id: 'PyQt5.QtQuick',
+      name: 'PyQt5.QtQuick',
+      category: '3D & OpenGL',
+      description: 'Motor QtQuick para interfaces.',
+      approxSavingsMB: 20,
+    },
+    {
+      id: 'PyQt5.QtQuickWidgets',
+      name: 'PyQt5.QtQuickWidgets',
+      category: '3D & OpenGL',
+      description: 'Bridge de QtQuick con widgets.',
+      approxSavingsMB: 10,
+    },
+    {
+      id: 'PyQt5.QtOpenGL',
+      name: 'PyQt5.QtOpenGL',
+      category: '3D & OpenGL',
+      description: 'API OpenGL para render acelerado.',
+      approxSavingsMB: 12,
+    },
+    {
+      id: 'PyQt5.QtSvg',
+      name: 'PyQt5.QtSvg',
+      category: 'Scientific & Extra',
+      description: 'Renderizado SVG.',
+      approxSavingsMB: 8,
+    },
+    {
+      id: 'PyQt5.QtNetwork',
+      name: 'PyQt5.QtNetwork',
+      category: 'Sensors & Hardware',
+      description: 'Pila de red y TLS.',
+      approxSavingsMB: 12,
     },
     {
       id: 'tkinter',
@@ -446,9 +929,26 @@ export const FRAMEWORK_EXCLUSION_CATALOG: Record<FrameworkType, ExclusionModuleI
 export const sanitizeExcludesForFramework = (fw: FrameworkType, excludes: string[]): string[] => {
   // Unrelated framework module prefixes to automatically purge when building a specific framework
   const isQt = fw.startsWith('PySide') || fw.startsWith('PyQt');
+  const protectedCoreByFramework: Record<FrameworkType, string[]> = {
+    PySide6: ['pyside6.qtcore', 'pyside6.qtgui', 'pyside6.qtwidgets', 'shiboken6', 'shibokensupport'],
+    PyQt6: ['pyqt6.qtcore', 'pyqt6.qtgui', 'pyqt6.qtwidgets'],
+    PySide2: ['pyside2.qtcore', 'pyside2.qtgui', 'pyside2.qtwidgets', 'shiboken2', 'shibokensupport'],
+    PyQt5: ['pyqt5.qtcore', 'pyqt5.qtgui', 'pyqt5.qtwidgets'],
+    Kivy: [],
+    Tkinter: [],
+  };
+  const protectedCore = new Set(
+    (protectedCoreByFramework[fw] || []).map((mod) => mod.toLowerCase()),
+  );
   
   return excludes.filter((mod) => {
     const lower = mod.toLowerCase();
+
+    // Never allow excluding framework core runtime modules required to bootstrap bindings.
+    if (protectedCore.has(lower)) {
+      return false;
+    }
+
     // If we're building PySide or PyQt, we don't need 'kivy' or 'kivy_install' in exclude_modules
     if (isQt && (lower === 'kivy' || lower === 'kivy_install' || lower.startsWith('kivy.'))) {
       return false;
@@ -492,14 +992,20 @@ export const getUpxExcludesForPlatform = (
         case 'Tkinter':
           return ['python3*.dll', 'tcl86t.dll', 'tk86t.dll'];
         case 'PyQt5':
-          return ['vcruntime140.dll', 'python3*.dll', 'PyQt5.QtCore.pyd'];
+          return [
+            'Qt5Core.dll',
+            'Qt5DBus.dll',
+            'Qt5Gui.dll',
+            'Qt5Widgets.dll',
+            'qwindows.dll',
+          ];
         case 'PySide2':
           return ['vcruntime140.dll', 'python3*.dll', 'PySide2.QtCore.pyd'];
         case 'PyQt6':
-          return ['vcruntime140.dll', 'python3*.dll', 'PyQt6.QtCore.pyd'];
+          return ['vcruntime140.dll', 'python3*.dll', 'PyQt6.QtCore.pyd', 'MSVCP140.dll', 'Qt6Core.dll'];
         case 'PySide6':
         default:
-          return ['vcruntime140.dll', 'python3*.dll', 'PySide6.QtCore.pyd'];
+          return ['vcruntime140.dll', 'python3*.dll', 'PySide6.QtCore.pyd', 'MSVCP140.dll', 'Qt6Core.dll'];
       }
     }
     return [];
@@ -531,84 +1037,18 @@ export const getUpxExcludesForPlatform = (
 };
 
 export const getRecommendedExcludesForFramework = (fw: FrameworkType): string[] => {
+  const unique = (items: string[]): string[] => Array.from(new Set(items));
+  const catalogIds = (FRAMEWORK_EXCLUSION_CATALOG[fw] || []).map((item) => item.id);
+
   switch (fw) {
     case 'PySide6':
-      return [
-        'PySide6.QtWebEngineCore',
-        'PySide6.QtWebEngineWidgets',
-        'PySide6.QtWebEngineQuick',
-        'PySide6.QtPdf',
-        'PySide6.QtPdfWidgets',
-        'PySide6.Qt3DCore',
-        'PySide6.QtQuick3D',
-        'PySide6.Qt3DAnimation',
-        'PySide6.QtSensors',
-        'PySide6.QtPositioning',
-        'PySide6.QtBluetooth',
-        'PySide6.QtNfc',
-        'PySide6.QtDesigner',
-        'PySide6.QtSpatialAudio',
-        'PySide6.QtMultimedia',
-        'PySide6.QtCharts',
-        'PySide6.QtVirtualKeyboard',
-        'tkinter',
-        'unittest',
-        'test',
-        'pydoc',
-      ];
+      return unique([...catalogIds, 'test', 'pydoc']);
     case 'PyQt6':
-      return [
-        'PyQt6.QtWebEngineCore',
-        'PyQt6.QtWebEngineWidgets',
-        'PyQt6.QtWebEngineQuick',
-        'PyQt6.QtPdf',
-        'PyQt6.Qt3DCore',
-        'PyQt6.QtQuick3D',
-        'PyQt6.QtSensors',
-        'PyQt6.QtPositioning',
-        'PyQt6.QtBluetooth',
-        'PyQt6.QtNfc',
-        'PyQt6.QtDesigner',
-        'PyQt6.QtSpatialAudio',
-        'PyQt6.QtMultimedia',
-        'PyQt6.QtCharts',
-        'tkinter',
-        'unittest',
-        'test',
-        'pydoc',
-      ];
+      return unique([...catalogIds, 'test', 'pydoc']);
     case 'PySide2':
-      return [
-        'PySide2.QtWebEngineCore',
-        'PySide2.QtWebEngineWidgets',
-        'PySide2.Qt3DCore',
-        'PySide2.QtSensors',
-        'PySide2.QtPositioning',
-        'PySide2.QtLocation',
-        'PySide2.QtBluetooth',
-        'PySide2.QtDesigner',
-        'PySide2.QtMultimedia',
-        'tkinter',
-        'unittest',
-        'test',
-        'pydoc',
-      ];
+      return unique([...catalogIds, 'test', 'pydoc']);
     case 'PyQt5':
-      return [
-        'PyQt5.QtWebEngineCore',
-        'PyQt5.QtWebEngineWidgets',
-        'PyQt5.Qt3DCore',
-        'PyQt5.QtSensors',
-        'PyQt5.QtPositioning',
-        'PyQt5.QtLocation',
-        'PyQt5.QtBluetooth',
-        'PyQt5.QtDesigner',
-        'PyQt5.QtMultimedia',
-        'tkinter',
-        'unittest',
-        'test',
-        'pydoc',
-      ];
+      return unique([...catalogIds, 'test', 'pydoc']);
     case 'Kivy':
       return [
         'tkinter',
