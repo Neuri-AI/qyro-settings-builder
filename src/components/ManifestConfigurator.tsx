@@ -30,6 +30,10 @@ import {
   FrameworkType,
   BytecodeOptLevel,
   KivyConfig,
+  LinuxConfig,
+  MacosConfig,
+  ReleaseConfig,
+  SignConfig,
   QyroAddon,
 } from "../types";
 import { AVAILABLE_ADDONS } from "../data/addons";
@@ -58,10 +62,10 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeSection, setActiveSection] = useState<
-    "project" | "bundle" | "kivy" | "uac" | "debug" | "optimization"
+    "project" | "bundle" | "release" | "sign" | "kivy" | "uac" | "debug" | "optimization"
   >("project");
   const [activeJsonFile, setActiveJsonFile] = useState<
-    "base" | "windows" | "linux" | "macos" | "release" | "merged"
+    "base" | "windows" | "linux" | "macos" | "release" | "sign" | "merged"
   >("base");
   const [customAddonInput, setCustomAddonInput] = useState<string>("");
   const [selectedAddonCategory, setSelectedAddonCategory] =
@@ -85,6 +89,37 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     kvFilesAutoCollect: true,
     customKvPaths: ["views/*.kv", "components/*.kv"],
   };
+  const defaultLinuxConfig: LinuxConfig = {
+    categories: "Utility;",
+    description: "",
+    authorEmail: "",
+    url: "",
+  };
+  const defaultMacosConfig: MacosConfig = {
+    bundleIdentifier: "",
+    targetArchitecture: "",
+  };
+  const defaultReleaseConfig: ReleaseConfig = {
+    extraFiles: [],
+    dmg: {
+      enabled: false,
+      windowX: 200, windowY: 120, windowWidth: 660, windowHeight: 420,
+      iconSize: 100, appX: 160, appY: 200, applicationsX: 510,
+      applicationsY: 200, background: "", extraFiles: [],
+    },
+    nsis: {
+      installIcon: "resources/base/icons/install.ico", uninstallIcon: "resources/base/icons/uninstall.ico", welcomeBitmap: "",
+      installLocation: "programfiles64", executionLevel: "highest",
+    },
+  };
+  const defaultSignConfig: SignConfig = {
+    windows: { certificate: "src/sign/windows/certificate.pfx", password: "", timestampServer: "https://timestamp.digicert.com", description: manifest.appName, url: "" },
+    mac: { identity: "", entitlements: "src/sign/mac/entitlements.plist", notary: { enabled: false, staple: true, assessGatekeeper: false, keychainProfile: "" } },
+  };
+  const linux = manifest.linux || defaultLinuxConfig;
+  const macos = manifest.macos || defaultMacosConfig;
+  const release = manifest.release || defaultReleaseConfig;
+  const sign = manifest.sign || defaultSignConfig;
 
   // Real-time dynamic size estimation calculation
   const estimatedSize = calculateEstimatedSize(
@@ -121,6 +156,8 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     version: manifest.version,
     binding: manifest.framework.toLowerCase(),
     hidden_imports: manifest.hiddenImports,
+    ...(manifest.icon ? { icon: manifest.icon } : {}),
+    ...(manifest.identifier ? { identifier: manifest.identifier } : {}),
   };
 
   // 2. Generate settings/windows.json
@@ -135,6 +172,8 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     debug: {
       enabled: manifest.debug.enabled,
       console_window: manifest.debug.consoleWindow,
+      unstripped: manifest.debug.unstripped || false,
+      bootloader_debug: manifest.debug.bootloaderDebug || false,
     },
     optimization: {
       strip_binaries: manifest.optimization.stripBinaries,
@@ -167,22 +206,26 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
       include_sdl2: manifest.kivy.includeSdl2,
       include_glew: manifest.kivy.includeGlew,
       include_gstreamer: manifest.kivy.includeGstreamer,
+      include_angle: manifest.kivy.includeAngle,
       kv_files_auto_collect: manifest.kivy.kvFilesAutoCollect,
+      custom_kv_paths: manifest.kivy.customKvPaths,
     };
   }
 
   // 3. Generate settings/linux.json (standard Qyro profile)
   const linuxJsonObj = {
-    categories: "Utility;",
-    description: "",
-    author_email: "",
-    url: "",
+    categories: linux.categories,
+    description: linux.description,
+    author_email: linux.authorEmail,
+    url: linux.url,
     bundle_mode: manifest.bundleMode,
     paths: normalizeList(manifest.paths || []),
     collect_all: effectiveCollectAll,
     debug: {
       enabled: manifest.debug.enabled,
       console: manifest.debug.consoleWindow,
+      unstripped: manifest.debug.unstripped || false,
+      bootloader_debug: manifest.debug.bootloaderDebug || false,
     },
     optimization: {
       strip_binaries: manifest.optimization.stripBinaries,
@@ -214,10 +257,13 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     bundle_mode: manifest.bundleMode,
     paths: normalizeList(manifest.paths || []),
     collect_all: effectiveCollectAll,
-    mac_bundle_identifier: `com.${(manifest.author || "john").toLowerCase().replace(/\s+/g, "")}.${manifest.appName.toLowerCase().replace(/\s+/g, "")}`,
+    mac_bundle_identifier: macos.bundleIdentifier || `com.${(manifest.author || "john").toLowerCase().replace(/\s+/g, "")}.${manifest.appName.toLowerCase().replace(/\s+/g, "")}`,
+    ...(macos.targetArchitecture ? { mac_target_architecture: macos.targetArchitecture } : {}),
     debug: {
       enabled: manifest.debug.enabled,
       console: manifest.debug.consoleWindow,
+      unstripped: manifest.debug.unstripped || false,
+      bootloader_debug: manifest.debug.bootloaderDebug || false,
     },
     optimization: {
       strip_binaries: manifest.optimization.stripBinaries,
@@ -236,8 +282,50 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
 
   // 5. Generate settings/release.json (standard Qyro profile)
   const releaseJsonObj = {
-    release: false,
-    environment: "development",
+    bundle: {
+      ...(release.extraFiles.length ? { extra_files: release.extraFiles } : {}),
+      ...(release.dmg.enabled ? {
+          dmg: {
+            window: { x: release.dmg.windowX, y: release.dmg.windowY },
+            window_size: { width: release.dmg.windowWidth, height: release.dmg.windowHeight },
+            icon_size: release.dmg.iconSize,
+            app_position: { x: release.dmg.appX, y: release.dmg.appY },
+            applications_position: { x: release.dmg.applicationsX, y: release.dmg.applicationsY },
+            background: release.dmg.background,
+            ...(release.dmg.extraFiles.length ? { extra_files: release.dmg.extraFiles } : {}),
+          },
+      } : {}),
+      nsis: {
+            icons: {
+              install: release.nsis.installIcon,
+              uninstall: release.nsis.uninstallIcon,
+            },
+            ...(release.nsis.welcomeBitmap ? { welcome_bitmap: release.nsis.welcomeBitmap } : {}),
+            install_location: release.nsis.installLocation,
+            execution_level: release.nsis.executionLevel,
+      },
+    },
+  };
+  const signJsonObj = {
+    sign: {
+      windows: {
+        certificate: sign.windows.certificate,
+        ...(sign.windows.password ? { password: sign.windows.password } : {}),
+        timestamp_server: sign.windows.timestampServer,
+        ...(sign.windows.description ? { description: sign.windows.description } : {}),
+        ...(sign.windows.url ? { url: sign.windows.url } : {}),
+      },
+      mac: {
+        ...(sign.mac.identity ? { identity: sign.mac.identity } : {}),
+        ...(sign.mac.entitlements ? { entitlements: sign.mac.entitlements } : {}),
+        notary: {
+          enabled: sign.mac.notary.enabled,
+          staple: sign.mac.notary.staple,
+          assess_gatekeeper: sign.mac.notary.assessGatekeeper,
+          ...(sign.mac.notary.keychainProfile ? { keychain_profile: sign.mac.notary.keychainProfile } : {}),
+        },
+      },
+    },
   };
 
   let currentJsonString = "";
@@ -263,6 +351,10 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     case "release":
       currentJsonString = JSON.stringify(releaseJsonObj, null, 4);
       currentFilePath = "settings/release.json";
+      break;
+    case "sign":
+      currentJsonString = JSON.stringify(signJsonObj, null, 4);
+      currentFilePath = "settings/sign.json";
       break;
     case "merged":
     default:
@@ -311,7 +403,11 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
 
   const handleDownloadJson = () => {
     const filename =
-      activeJsonFile === "merged" ? "manifest.json" : `${activeJsonFile}.json`;
+      activeJsonFile === "merged"
+        ? "manifest.json"
+        : activeJsonFile === "macos"
+          ? "mac.json"
+          : `${activeJsonFile}.json`;
     const blob = new Blob([currentJsonString], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -320,6 +416,15 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const syntaxHighlightedJson = currentJsonString.split("\n").map((line, lineIndex) => {
+    const tokens = line.split(/("(?:\\.|[^"\\])*"(?=\s*:)|"(?:\\.|[^"\\])*")|(\btrue\b|\bfalse\b|\bnull\b)|(-?\b\d+(?:\.\d+)?\b)/g);
+    return <React.Fragment key={lineIndex}>{tokens.map((token, index) => {
+      if (!token) return null;
+      const className = /^"/.test(token) ? (/:\s*$/.test(line.slice(line.indexOf(token) + token.length)) ? "text-sky-300" : "text-amber-200") : /^(true|false|null)$/.test(token) ? "text-fuchsia-300" : /^-?\d/.test(token) ? "text-violet-300" : "text-zinc-300";
+      return <span key={index} className={className}>{token}</span>;
+    })}{lineIndex < currentJsonString.split("\n").length - 1 && "\n"}</React.Fragment>;
+  });
 
   const handleFrameworkChange = (fw: FrameworkType) => {
     const rawRecommended = getRecommendedExcludesForFramework(fw);
@@ -579,7 +684,7 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Banner Overview */}
-      <div className="bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900 rounded-2xl p-6 text-white border border-zinc-700 shadow-md">
+      <div className="bg-zinc-900 rounded-lg p-6 text-white border border-zinc-800">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center space-x-2">
@@ -679,6 +784,30 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
             >
               <Package className="w-3.5 h-3.5 text-amber-600" />
               <span>2. Platform ({manifest.targetPlatform})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSection("release")}
+              className={`flex items-center space-x-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                activeSection === "release"
+                  ? "bg-white text-zinc-900 shadow-xs font-semibold"
+                  : "text-zinc-600 hover:text-zinc-900"
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-rose-600" />
+              <span>Release</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSection("sign")}
+              className={`flex items-center space-x-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                activeSection === "sign"
+                  ? "bg-white text-zinc-900 shadow-xs font-semibold"
+                  : "text-zinc-600 hover:text-zinc-900"
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+              <span>Sign</span>
             </button>
 
             {manifest.framework === "Kivy" && (
@@ -865,6 +994,21 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                     }
                     className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono"
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs border-t border-zinc-100 pt-4">
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">App icon (optional) (<code>icon</code>)</label>
+                  <input type="text" placeholder="resources/base/app.ico" value={manifest.icon || ""}
+                    onChange={(e) => onChange({ ...manifest, icon: e.target.value })}
+                    className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono" />
+                </div>
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">Runtime identifier (<code>identifier</code>)</label>
+                  <input type="text" value={manifest.identifier || ""}
+                    onChange={(e) => onChange({ ...manifest, identifier: e.target.value })}
+                    className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono" />
                 </div>
               </div>
 
@@ -1324,6 +1468,49 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                   shiboken dependencies available at runtime.
                 </p>
               </div>
+
+              {manifest.targetPlatform === "linux" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-zinc-100 pt-4 text-xs">
+                  <p className="sm:col-span-2 text-zinc-500">Linux desktop metadata (<code>categories</code>, <code>description</code>, <code>author_email</code>, <code>url</code>).</p>
+                  {([
+                    ["categories", "Categories", "Utility;"], ["description", "Description", "Desktop client"],
+                    ["authorEmail", "Author email", "dev@example.com"], ["url", "Website URL", "https://example.com"],
+                  ] as const).map(([key, label, placeholder]) => (
+                    <div key={key}><label className="block font-semibold text-zinc-700 mb-1">{label}</label><input type="text" value={linux[key]} placeholder={placeholder}
+                      onChange={(e) => onChange({ ...manifest, linux: { ...linux, [key]: e.target.value } })}
+                      className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-hidden" /></div>
+                  ))}
+                </div>
+              )}
+
+              {manifest.targetPlatform === "macos" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-zinc-100 pt-4 text-xs">
+                  <div><label className="block font-semibold text-zinc-700 mb-1">Bundle identifier (<code>mac_bundle_identifier</code>)</label><input type="text" value={macos.bundleIdentifier} placeholder="com.example.myapp"
+                    onChange={(e) => onChange({ ...manifest, macos: { ...macos, bundleIdentifier: e.target.value } })}
+                    className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-hidden font-mono" /></div>
+                  <div><label className="block font-semibold text-zinc-700 mb-1">Target architecture (<code>mac_target_architecture</code>)</label><select value={macos.targetArchitecture}
+                    onChange={(e) => onChange({ ...manifest, macos: { ...macos, targetArchitecture: e.target.value as MacosConfig["targetArchitecture"] } })}
+                    className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:outline-hidden"><option value="">Native / default</option><option value="x86_64">x86_64</option><option value="arm64">arm64</option><option value="universal2">universal2</option></select></div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeSection === "release" && (
+            <div className="bg-white rounded-xl border border-zinc-200 p-5 space-y-5 shadow-xs text-xs">
+              <div className="border-b border-zinc-100 pb-3"><h3 className="text-sm font-bold text-zinc-900 flex items-center gap-2"><Layers className="w-4 h-4 text-rose-600" />Release packaging (<code>settings/release.json</code>)</h3><p className="text-zinc-500 mt-1">Configure metadata, bundle files, DMG layout and NSIS installer options. Signing credentials belong in a local <code>settings/sign.json</code>, not this export.</p></div>
+              <div><label className="block font-semibold text-zinc-700 mb-1">Extra files, one source path per line (<code>bundle.extra_files</code>)</label><textarea rows={3} value={release.extraFiles.join("\n")} onChange={(e) => onChange({ ...manifest, release: { ...release, extraFiles: parseListFromText(e.target.value) } })} placeholder="README.md\ndocs/RELEASE_NOTES.md" className="w-full px-3 py-2 border border-zinc-300 rounded-lg font-mono" /></div>
+              <div className="border-t border-zinc-100 pt-4 space-y-3"><h4 className="font-bold text-zinc-800">macOS DMG (<code>bundle.dmg</code>)</h4><label className="flex items-center gap-2 font-semibold text-zinc-700"><input type="checkbox" checked={release.dmg.enabled} onChange={(e) => onChange({ ...manifest, release: { ...release, dmg: { ...release.dmg, enabled: e.target.checked } } })} /> Enable DMG customization (requires <code>create-dmg</code>)</label>{release.dmg.enabled && <><div className="grid grid-cols-2 sm:grid-cols-5 gap-2">{([['windowX', 'Window X'], ['windowY', 'Window Y'], ['windowWidth', 'Width'], ['windowHeight', 'Height'], ['iconSize', 'Icon size'], ['appX', 'App X'], ['appY', 'App Y'], ['applicationsX', 'Apps X'], ['applicationsY', 'Apps Y']] as const).map(([key, label]) => <div key={key}><label className="block text-zinc-600 mb-1">{label}</label><input type="number" value={release.dmg[key]} onChange={(e) => onChange({ ...manifest, release: { ...release, dmg: { ...release.dmg, [key]: Number(e.target.value) } } })} className="w-full px-2 py-2 border border-zinc-300 rounded-lg" /></div>)}</div><div><label className="block font-semibold text-zinc-700 mb-1">Background image</label><input type="text" value={release.dmg.background} onChange={(e) => onChange({ ...manifest, release: { ...release, dmg: { ...release.dmg, background: e.target.value } } })} placeholder="resources/mac/release/dmg-background.png" className="w-full px-3 py-2 border border-zinc-300 rounded-lg font-mono" /></div><div><label className="block font-semibold text-zinc-700 mb-1">Files inside the DMG, one source path per line (<code>bundle.dmg.extra_files</code>)</label><textarea rows={2} value={release.dmg.extraFiles.join("\n")} onChange={(e) => onChange({ ...manifest, release: { ...release, dmg: { ...release.dmg, extraFiles: parseListFromText(e.target.value) } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg font-mono" /></div></>}</div>
+              <div className="border-t border-zinc-100 pt-4 space-y-3"><h4 className="font-bold text-zinc-800">Windows NSIS (<code>bundle.nsis</code>)</h4><div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{([['installIcon', 'Install icon'], ['uninstallIcon', 'Uninstall icon'], ['welcomeBitmap', 'Welcome bitmap']] as const).map(([key, label]) => <div key={key}><label className="block font-semibold text-zinc-700 mb-1">{label}</label><input type="text" value={release.nsis[key]} onChange={(e) => onChange({ ...manifest, release: { ...release, nsis: { ...release.nsis, [key]: e.target.value } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg font-mono" /></div>)}</div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><label className="block font-semibold text-zinc-700 mb-1">Install location</label><select value={release.nsis.installLocation} onChange={(e) => onChange({ ...manifest, release: { ...release, nsis: { ...release.nsis, installLocation: e.target.value as ReleaseConfig['nsis']['installLocation'] } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg"><option value="programfiles64">programfiles64</option><option value="programfiles32">programfiles32</option><option value="appdata">appdata</option></select></div><div><label className="block font-semibold text-zinc-700 mb-1">Execution level</label><select value={release.nsis.executionLevel} onChange={(e) => onChange({ ...manifest, release: { ...release, nsis: { ...release.nsis, executionLevel: e.target.value as ReleaseConfig['nsis']['executionLevel'] } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg"><option value="highest">highest</option><option value="admin">admin</option><option value="user">user</option></select></div></div></div>
+            </div>
+          )}
+
+          {activeSection === "sign" && (
+            <div className="bg-white rounded-xl border border-zinc-200 p-5 space-y-4 shadow-xs text-xs">
+              <div className="border-b border-zinc-100 pb-3"><h3 className="text-sm font-bold text-zinc-900 flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-rose-600" />Code signing (<code>settings/sign.json</code>)</h3><p className="text-zinc-500 mt-1">Keep this local and out of version control.</p></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{([['certificate', 'Windows certificate'], ['password', 'Certificate password'], ['timestampServer', 'Timestamp server'], ['description', 'Signature description'], ['url', 'Signature URL']] as const).map(([key, label]) => <div key={key}><label className="block font-semibold text-zinc-700 mb-1">{label}</label><input type={key === 'password' ? 'password' : 'text'} value={sign.windows[key]} onChange={(e) => onChange({ ...manifest, sign: { ...sign, windows: { ...sign.windows, [key]: e.target.value } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg font-mono" /></div>)}</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-zinc-100 pt-4"><div><label className="block font-semibold text-zinc-700 mb-1">macOS identity</label><input value={sign.mac.identity} onChange={(e) => onChange({ ...manifest, sign: { ...sign, mac: { ...sign.mac, identity: e.target.value } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg" /></div><div><label className="block font-semibold text-zinc-700 mb-1">Entitlements</label><input value={sign.mac.entitlements} onChange={(e) => onChange({ ...manifest, sign: { ...sign, mac: { ...sign.mac, entitlements: e.target.value } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg font-mono" /></div><div><label className="block font-semibold text-zinc-700 mb-1">Notary keychain profile</label><input value={sign.mac.notary.keychainProfile} onChange={(e) => onChange({ ...manifest, sign: { ...sign, mac: { ...sign.mac, notary: { ...sign.mac.notary, keychainProfile: e.target.value } } } })} className="w-full px-3 py-2 border border-zinc-300 rounded-lg" /></div></div>
+              <div className="flex flex-wrap gap-4">{([['enabled', 'Notarize'], ['staple', 'Staple ticket'], ['assessGatekeeper', 'Assess Gatekeeper']] as const).map(([key, label]) => <label key={key} className="flex items-center gap-2"><input type="checkbox" checked={sign.mac.notary[key]} onChange={(e) => onChange({ ...manifest, sign: { ...sign, mac: { ...sign.mac, notary: { ...sign.mac.notary, [key]: e.target.checked } } } })} />{label}</label>)}</div>
             </div>
           )}
 
@@ -1386,6 +1573,13 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                     }
                     className="w-5 h-5 text-emerald-600 rounded-sm border-zinc-300 focus:ring-emerald-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">Additional KV globs (<code>custom_kv_paths</code>), one per line</label>
+                  <textarea rows={2} value={(manifest.kivy?.customKvPaths || defaultKivyConfig.customKvPaths).join("\n")}
+                    onChange={(e) => onChange({ ...manifest, kivy: { ...(manifest.kivy || defaultKivyConfig), customKvPaths: parseListFromText(e.target.value) } })}
+                    className="w-full px-3 py-2 border border-zinc-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-hidden font-mono text-xs" />
                 </div>
 
                 {/* Kivy dependencies DLLs */}
@@ -1467,6 +1661,10 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                           Video / Audio
                         </span>
                       </div>
+                    </label>
+                    <label className="flex items-center space-x-2 p-2 bg-white rounded-lg border border-zinc-200 cursor-pointer">
+                      <input type="checkbox" checked={manifest.kivy?.includeAngle ?? false} onChange={(e) => onChange({ ...manifest, kivy: { ...(manifest.kivy || defaultKivyConfig), includeAngle: e.target.checked } })} className="w-4 h-4 text-emerald-600 rounded-sm" />
+                      <div><span className="font-bold text-zinc-800 block">ANGLE (DirectX)</span><span className="text-[10px] text-zinc-500">include_angle</span></div>
                     </label>
                   </div>
                 </div>
@@ -1618,6 +1816,10 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                     }
                     className="w-4 h-4 text-amber-600 rounded-sm border-zinc-300 focus:ring-amber-500"
                   />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 p-3 bg-zinc-50 rounded-xl border border-zinc-200 text-zinc-700"><input type="checkbox" checked={manifest.debug.unstripped || false} onChange={(e) => onChange({ ...manifest, debug: { ...manifest.debug, unstripped: e.target.checked } })} /> Import tracing (<code>unstripped</code>)</label>
+                  <label className="flex items-center gap-2 p-3 bg-zinc-50 rounded-xl border border-zinc-200 text-zinc-700"><input type="checkbox" checked={manifest.debug.bootloaderDebug || false} onChange={(e) => onChange({ ...manifest, debug: { ...manifest.debug, bootloaderDebug: e.target.checked } })} /> Bootloader tracing (<code>bootloader_debug</code>)</label>
                 </div>
               </div>
             </div>
@@ -1843,7 +2045,7 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
               </div>
 
               {/* Dynamic Size Estimation & Impact Overview */}
-              <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 rounded-xl p-4 text-white border border-zinc-800 shadow-sm space-y-3">
+              <div className="bg-zinc-900 rounded-lg p-4 text-white border border-zinc-800 space-y-3">
                 <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
                   <div className="flex items-center space-x-2">
                     <Sparkles className="w-4 h-4 text-amber-400" />
@@ -1928,7 +2130,7 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
                   </div>
                   <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                     <div
-                      className="bg-gradient-to-r from-emerald-500 to-amber-400 h-1.5 rounded-full transition-all duration-300"
+                    className="bg-zinc-300 h-1.5 rounded-full transition-all duration-300"
                       style={{
                         width: `${Math.min(100, Math.round((estimatedSize.excludedCount / Math.max(1, estimatedSize.totalCatalogCount)) * 100))}%`,
                       }}
@@ -2811,6 +3013,19 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
 
                 <button
                   type="button"
+                  onClick={() => setActiveJsonFile("sign")}
+                  className={`flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-t-lg font-mono transition-colors whitespace-nowrap cursor-pointer ${
+                    activeJsonFile === "sign"
+                      ? "bg-zinc-900 text-rose-400 font-bold border-t-2 border-rose-500"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50"
+                  }`}
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>sign.json</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setActiveJsonFile("merged")}
                   className={`flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-t-lg font-mono transition-colors whitespace-nowrap cursor-pointer ${
                     activeJsonFile === "merged"
@@ -2859,9 +3074,9 @@ export const ManifestConfigurator: React.FC<ManifestConfiguratorProps> = ({
             </div>
 
             {/* JSON Content Area */}
-            <div className="flex-1 p-3 overflow-auto bg-zinc-900">
-              <pre className="font-mono text-xs text-emerald-400 leading-relaxed selection:bg-amber-900">
-                {currentJsonString}
+            <div className="flex-1 p-4 overflow-auto bg-zinc-950">
+              <pre className="font-mono text-xs leading-6 selection:bg-zinc-700">
+                <code>{syntaxHighlightedJson}</code>
               </pre>
             </div>
 

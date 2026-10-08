@@ -28,7 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center justify-between h-16">
           {/* Logo & Brand */}
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center text-white shadow-md shadow-orange-500/20">
+            <div className="w-10 h-10 rounded-lg bg-orange-600 flex items-center justify-center text-white">
               <svg
                 className="w-5 h-5"
                 width="276"
@@ -102,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-lg font-bold tracking-tight text-zinc-900">
                   QYRO
                 </span>
-                <span className="px-2 py-0.5 text-xs font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 rounded-md">
+                  <span className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider border border-zinc-300 text-zinc-600 rounded-sm">
                   Settings Generator
                 </span>
               </div>
@@ -134,7 +134,7 @@ export const Header: React.FC<HeaderProps> = ({
                     className={`px-2.5 py-1 text-xs border rounded-lg font-semibold transition-all ${
                       isActive
                         ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
-                        : "bg-zinc-50 border-zinc-200 text-zinc-700 hover:border-amber-300 hover:bg-amber-50/50 hover:text-amber-900"
+                        : "bg-white border-zinc-200 text-zinc-700 hover:border-zinc-400 hover:bg-zinc-50"
                     }`}
                     title={preset.description}
                   >

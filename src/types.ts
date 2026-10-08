@@ -40,6 +40,63 @@ export interface KivyConfig {
   customKvPaths: string[];
 }
 
+export interface LinuxConfig {
+  categories: string;
+  description: string;
+  authorEmail: string;
+  url: string;
+}
+
+export interface MacosConfig {
+  bundleIdentifier: string;
+  targetArchitecture: '' | 'x86_64' | 'arm64' | 'universal2';
+}
+
+export interface ReleaseConfig {
+  extraFiles: string[];
+  dmg: {
+    enabled: boolean;
+    windowX: number;
+    windowY: number;
+    windowWidth: number;
+    windowHeight: number;
+    iconSize: number;
+    appX: number;
+    appY: number;
+    applicationsX: number;
+    applicationsY: number;
+    background: string;
+    extraFiles: string[];
+  };
+  nsis: {
+    installIcon: string;
+    uninstallIcon: string;
+    welcomeBitmap: string;
+    installLocation: 'programfiles64' | 'programfiles32' | 'appdata';
+    executionLevel: 'highest' | 'admin' | 'user';
+  };
+}
+
+export interface SignConfig {
+  windows: {
+    certificate: string;
+    password: string;
+    timestampServer: string;
+    description: string;
+    url: string;
+  };
+  mac: {
+    identity: string;
+    entitlements: string;
+    notary: {
+      enabled: boolean;
+      staple: boolean;
+      assessGatekeeper: boolean;
+      keychainProfile: string;
+    };
+  };
+}
+
 export interface QyroAddon {
   id: string;
   name: string;
@@ -73,6 +130,12 @@ export interface FreezeManifest {
   extraPyInstallerArgs: string[];
   paths: string[];
   collectAll: string[];
+  icon?: string;
+  identifier?: string;
+  linux?: LinuxConfig;
+  macos?: MacosConfig;
+  release?: ReleaseConfig;
+  sign?: SignConfig;
 }
 
 export interface BuildLogEntry {
